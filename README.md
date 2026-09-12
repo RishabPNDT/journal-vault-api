@@ -1,6 +1,6 @@
 # Journal App
 
-A full-stack personal journaling app: a Spring Boot + MongoDB REST API with JWT authentication, paired with a React (Vite) frontend. Built to practice the same security fundamentals as my [Task Management API](#) — ownership enforcement, clean error handling, and no client-trusted IDs — in a MongoDB/document-store context instead of a relational one.
+A full-stack personal journaling app: a Spring Boot + MongoDB REST API with JWT authentication, paired with a React (Vite) frontend. Built to practice the same security fundamentals as my [shieldTask-api](https://github.com/RishabPNDT/shieldtask-api) — ownership enforcement, clean error handling, and no client-trusted IDs — in a MongoDB/document-store context instead of a relational one.
 
 ## Tech Stack
 
