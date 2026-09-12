@@ -1,0 +1,315 @@
+{
+  "info": {
+    "name": "Journal App - Security Test Walkthrough",
+    "description": "End-to-end sequence: register two users, login (including a wrong-password check), create entries, verify IDOR protection on update/delete, and confirm clean error handling.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080" },
+    { "key": "userA_token", "value": "" },
+    { "key": "userB_token", "value": "" },
+    { "key": "userA_entryId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "1. Health check",
+      "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/health-check" },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"] }
+      }]
+    },
+    {
+      "name": "2. Register User A",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/auth/register",
+        "body": { "mode": "raw", "raw": "{\n  \"username\": \"alice_journal\",\n  \"password\": \"password123\"\n}" }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+            "const json = pm.response.json();",
+            "pm.collectionVariables.set('userA_token', json.token);",
+            "pm.test('Token received', () => pm.expect(json.token).to.be.a('string').and.not.empty);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "3. Register User B",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/auth/register",
+        "body": { "mode": "raw", "raw": "{\n  \"username\": \"bob_journal\",\n  \"password\": \"password123\"\n}" }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+            "const json = pm.response.json();",
+            "pm.collectionVariables.set('userB_token', json.token);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "4. Register same username again (should conflict)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/auth/register",
+        "body": { "mode": "raw", "raw": "{\n  \"username\": \"alice_journal\",\n  \"password\": \"password123\"\n}" }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 409 Conflict', () => pm.response.to.have.status(409));",
+            "pm.test('No internal error leaked', () => pm.expect(pm.response.text()).to.not.include('Exception'));"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "5. Login as User A (correct password)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/auth/login",
+        "body": { "mode": "raw", "raw": "{\n  \"username\": \"alice_journal\",\n  \"password\": \"password123\"\n}" }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.collectionVariables.set('userA_token', json.token);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "6. [FIX CHECK] Login with WRONG password",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/auth/login",
+        "body": { "mode": "raw", "raw": "{\n  \"username\": \"alice_journal\",\n  \"password\": \"wrongpassword\"\n}" }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 401, not a bare 403', () => pm.response.to.have.status(401));",
+            "const json = pm.response.json();",
+            "pm.test('Has clean JSON message body', () => pm.expect(json.message).to.eql('Invalid username or password'));",
+            "console.log('This confirms the AuthenticationException handler we added is working.');"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "7. Login with NONEXISTENT username",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/auth/login",
+        "body": { "mode": "raw", "raw": "{\n  \"username\": \"nobody_here\",\n  \"password\": \"password123\"\n}" }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 401 (same as wrong password - does not confirm username existence)', () => pm.response.to.have.status(401));"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "8. No token -> protected route",
+      "request": { "method": "GET", "header": [], "url": "{{baseUrl}}/api/entries" },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 401/403 (unauthenticated)', () => [401,403].includes(pm.response.code));"] }
+      }]
+    },
+    {
+      "name": "9. User A creates an Entry",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+        ],
+        "url": "{{baseUrl}}/api/entries",
+        "body": { "mode": "raw", "raw": "{\n  \"title\": \"Alice's private entry\",\n  \"content\": \"Should never be visible to Bob\"\n}" }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 201', () => pm.response.to.have.status(201));",
+            "const json = pm.response.json();",
+            "pm.collectionVariables.set('userA_entryId', json.id);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "10. User A lists own entries",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{userA_token}}" }],
+        "url": "{{baseUrl}}/api/entries"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Contains the created entry', () => pm.expect(json.some(e => e.id === pm.collectionVariables.get('userA_entryId'))).to.be.true);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "11. User B lists entries (should be empty, not see Alice's)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{userB_token}}" }],
+        "url": "{{baseUrl}}/api/entries"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 200', () => pm.response.to.have.status(200));",
+            "const json = pm.response.json();",
+            "pm.test('Empty - does not include Alice\\'s entry', () => pm.expect(json.some(e => e.id === pm.collectionVariables.get('userA_entryId'))).to.be.false);"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "12. [IDOR CHECK] User B tries to update User A's entry",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{userB_token}}" }
+        ],
+        "url": "{{baseUrl}}/api/entries/{{userA_entryId}}",
+        "body": { "mode": "raw", "raw": "{\n  \"title\": \"Hacked\",\n  \"content\": \"Hacked content\"\n}" }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 404 (not 200, not 403)', () => pm.response.to.have.status(404));",
+            "console.log('Confirms the EntryNotFoundException fix - Bob gets 404, entry is never touched.');"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "13. [IDOR CHECK] User B tries to delete User A's entry",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{userB_token}}" }],
+        "url": "{{baseUrl}}/api/entries/{{userA_entryId}}"
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 404, entry NOT deleted', () => pm.response.to.have.status(404));"] }
+      }]
+    },
+    {
+      "name": "14. Confirm User A's entry still exists and is untouched",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{userA_token}}" }],
+        "url": "{{baseUrl}}/api/entries"
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "const json = pm.response.json();",
+            "const entry = json.find(e => e.id === pm.collectionVariables.get('userA_entryId'));",
+            "pm.test('Entry still exists', () => pm.expect(entry).to.not.be.undefined);",
+            "pm.test('Title was NOT changed by Bob\\'s attempted update', () => pm.expect(entry.title).to.eql(\"Alice's private entry\"));"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "15. User A updates own entry (should succeed)",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+        ],
+        "url": "{{baseUrl}}/api/entries/{{userA_entryId}}",
+        "body": { "mode": "raw", "raw": "{\n  \"title\": \"Alice's updated entry\",\n  \"content\": \"Updated content\"\n}" }
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 200', () => pm.response.to.have.status(200));"] }
+      }]
+    },
+    {
+      "name": "16. Invalid entry ID format (malformed ObjectId)",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{userA_token}}" }
+        ],
+        "url": "{{baseUrl}}/api/entries/not-a-valid-object-id",
+        "body": { "mode": "raw", "raw": "{\n  \"title\": \"x\",\n  \"content\": \"x\"\n}" }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "exec": [
+            "pm.test('Status is 400, not 500', () => pm.response.to.have.status(400));",
+            "pm.test('No stack trace leaked', () => pm.expect(pm.response.text()).to.not.include('Exception'));"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "17. User A deletes own entry (should succeed)",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{userA_token}}" }],
+        "url": "{{baseUrl}}/api/entries/{{userA_entryId}}"
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 204', () => pm.response.to.have.status(204));"] }
+      }]
+    },
+    {
+      "name": "18. Deleting the same entry again (now gone) -> 404 not 500",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{userA_token}}" }],
+        "url": "{{baseUrl}}/api/entries/{{userA_entryId}}"
+      },
+      "event": [{
+        "listen": "test",
+        "script": { "exec": ["pm.test('Status is 404', () => pm.response.to.have.status(404));"] }
+      }]
+    }
+  ]
+}
